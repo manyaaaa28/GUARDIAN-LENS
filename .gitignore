@@ -1,0 +1,6 @@
+venv/
+__pycache__/
+*.pyc
+guardianlens.db
+.env
+dshow_mjpg_test.jpg
