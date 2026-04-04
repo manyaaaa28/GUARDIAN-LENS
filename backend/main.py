@@ -22,8 +22,16 @@ from typing import Optional, AsyncGenerator
 import asyncio
 
 from backend import database as db
-from backend import camera
 from backend import ai_helper
+
+# Camera is only available when cv2/mediapipe are installed (local device)
+try:
+    from backend import camera
+    CAMERA_AVAILABLE = True
+except (ImportError, ModuleNotFoundError):
+    camera = None
+    CAMERA_AVAILABLE = False
+    print("[main] Camera module unavailable — running in cloud mode (no webcam).")
 
 # ── App setup ──────────────────────────────────────────────
 app = FastAPI(title="GuardianLens API")
@@ -43,13 +51,15 @@ app.add_middleware(
 @app.on_event("startup")
 async def on_startup():
     db.init_db()
-    camera.start_monitor(log_activity_fn=db.log_activity)
+    if CAMERA_AVAILABLE:
+        camera.start_monitor(log_activity_fn=db.log_activity)
     db.log_activity("System Started", "GuardianLens monitoring is now active.", "🛡️")
 
 
 @app.on_event("shutdown")
 async def on_shutdown():
-    camera.stop_monitor()
+    if CAMERA_AVAILABLE:
+        camera.stop_monitor()
 
 
 # ── Models ────────────────────────────────────────────────
@@ -96,6 +106,8 @@ class NotificationConfig(BaseModel):
 
 @app.get("/api/debug/pose")
 def debug_pose():
+    if not CAMERA_AVAILABLE:
+        return {"pose": "unavailable", "status": "cloud-mode", "fall_active": False, "camera_available": False}
     snap = camera.get_snapshot()
     import backend.camera as cam
     return {
@@ -109,16 +121,24 @@ def debug_pose():
 
 
 def get_stats():
-    snap = camera.get_snapshot()
+    if CAMERA_AVAILABLE:
+        snap = camera.get_snapshot()
+        hours = camera.get_hours_monitored()
+        status = snap["status"]
+        cam_available = snap["camera_available"]
+    else:
+        status = "safe"
+        hours = 0
+        cam_available = False
     activities = db.get_recent_activity(1)
     last_act = activities[0]['title'] + " at " + activities[0]['time'] if activities else "No activity yet"
     alerts = db.get_alerts_today()
     return {
-        "camera_available": snap["camera_available"],
-        "hours_monitored": round(camera.get_hours_monitored(), 2),
+        "camera_available": cam_available,
+        "hours_monitored": round(hours, 2),
         "alerts_today": alerts,
-        "status": snap["status"],
-        "statusLabel": "FALL DETECTED" if snap["status"] == "alert" else "All Clear",
+        "status": status,
+        "statusLabel": "FALL DETECTED" if status == "alert" else "All Clear",
         "medicationAdherence": 100,
         "lastActivity": last_act,
     }
@@ -128,6 +148,8 @@ def get_stats():
 
 @app.get("/api/snapshot")
 def get_snapshot():
+    if not CAMERA_AVAILABLE:
+        return {"pose": "unavailable", "status": "safe", "camera_available": False, "fall_active": False, "timestamp": "00:00:00"}
     return camera.get_snapshot()
 
 
@@ -137,7 +159,7 @@ async def _mjpeg_generator():
     """Yields MJPEG frames continuously at ~20 FPS."""
     boundary = b'--frame\r\nContent-Type: image/jpeg\r\n\r\n'
     while True:
-        frame = camera.get_latest_frame_bytes()
+        frame = camera.get_latest_frame_bytes() if CAMERA_AVAILABLE else None
         if frame:
             yield boundary + frame + b'\r\n'
         await asyncio.sleep(0.05)  # ~20 FPS
@@ -169,13 +191,15 @@ def send_voice(req: VoiceRequest):
 
 @app.post("/api/camera/pause")
 def pause_camera():
-    camera.pause_camera()
+    if CAMERA_AVAILABLE:
+        camera.pause_camera()
     return {"ok": True, "paused": True}
 
 
 @app.post("/api/camera/resume")
 def resume_camera():
-    camera.resume_camera()
+    if CAMERA_AVAILABLE:
+        camera.resume_camera()
     return {"ok": True, "paused": False}
 
 
