@@ -129,13 +129,10 @@ def _classify_pose(landmarks) -> str:
             return "lying"
 
     # ── Upper-body-only lying check (webcam fallback) ────────────────────
-    if not reliable_lower_body and l_shoulder and r_shoulder:
+    if l_shoulder and r_shoulder:
         shoulder_diff_y = abs(l_shoulder.y - r_shoulder.y)
-        shoulder_diff_x = abs(l_shoulder.x - r_shoulder.x)
-        # Very sensitive — any significant tilt triggers lying
-        if shoulder_diff_x > 0.08 and shoulder_diff_y < 0.18:
-            return "lying"
-        if x_span > 0 and y_span > 0 and (x_span / y_span) > 0.9:
+        # If one shoulder is significantly lower than the other → falling/fallen
+        if shoulder_diff_y > 0.08:
             return "lying"
 
     # ── Sitting check ────────────────────────────────────────────────────
